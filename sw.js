@@ -1,6 +1,7 @@
 // Guarda o app no iPhone para funcionar sem internet. Nenhum dado é enviado a lugar algum.
-const CACHE = "teleprompter-ethos-v1";
-const FILES = ["./", "./index.html", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
+const CACHE = "teleprompter-ethos-v2";
+const FILES = ["./", "./index.html", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png",
+  "./pdf.min.mjs", "./pdf.worker.min.mjs", "./fflate.min.js"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));

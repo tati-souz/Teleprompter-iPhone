@@ -119,7 +119,8 @@
   </header>
   <div class="notice" id="storageNotice"></div>
   <div class="list" id="list"></div>
-  <input type="file" id="fileInput" accept=".txt,text/plain" multiple hidden>
+  <input type="file" id="fileInput" multiple hidden
+    accept=".txt,.md,.markdown,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
 </section>
 
 <!-- EDITOR -->
@@ -188,6 +189,22 @@
     <div class="field switch"><span>Usar a câmera traseira</span><input type="checkbox" id="sBackCam"></div>
     <p class="small">O texto aparece só na sua tela: <b>não entra no vídeo gravado</b>. A prévia da câmera frontal aparece espelhada, como no app Câmera; o vídeo salvo fica na orientação normal.</p>
     <p class="small">● vermelho: contagem, depois grava e rola junto. ▶︎: ensaiar (rola sem gravar). Toque no texto para pausar ou retomar; com a rolagem pausada, arraste o texto para reposicionar.</p>
+  </div>
+</div>
+
+<!-- IMPORTAR -->
+<div class="sheet" id="importSheet">
+  <div class="sheetBody">
+    <div class="row"><h2 class="grow">Importar roteiro</h2><button class="btn" id="closeImport">Cancelar</button></div>
+    <div class="field">
+      <button class="btn primary" id="pasteBtn" style="width:100%">Colar do app Notas</button>
+      <p class="small">No app <b>Notas</b>, abra a nota, toque no texto ▸ <b>Selecionar Tudo</b> ▸ <b>Copiar</b>. Volte aqui e toque no botão acima. Se aparecer a bolha “Colar”, toque nela.</p>
+    </div>
+    <div class="field">
+      <button class="btn" id="pickFileBtn" style="width:100%">Escolher arquivo…</button>
+      <p class="small">Aceita <b>Bloco de notas (.txt)</b>, <b>Markdown (.md)</b>, <b>PDF</b> e <b>Word (.docx)</b>, do app Arquivos, do iCloud Drive ou de outros apps. Pode escolher vários de uma vez.</p>
+    </div>
+    <p class="small">Tudo é lido aqui no iPhone; nenhum arquivo é enviado para a internet.</p>
   </div>
 </div>
 
@@ -290,24 +307,179 @@ $("newBtn").onclick = () => {
 };
 
 // ---------- Importar / exportar .txt ----------
-$("importBtn").onclick = () => $("fileInput").click();
-$("fileInput").onchange = async (ev) => {
-  const notes = [];
-  for (const f of ev.target.files) {
-    try {
-      const buf = await f.arrayBuffer();
-      let text, fallback = false;
-      try { text = new TextDecoder("utf-8", { fatal: true }).decode(buf); }
-      catch (e) { text = new TextDecoder("windows-1252").decode(buf); fallback = true; }
-      text = text.replace(/^﻿/, "").replace(/\r\n?/g, "\n");
-      scripts.push({ id: uid(), title: f.name.replace(/\.txt$/i, "") || "Roteiro importado", body: text, updated: Date.now() });
-      if (fallback) notes.push(`“${f.name}” não estava em UTF-8; confira os acentos.`);
-    } catch (e) { notes.push(`Não foi possível ler “${f.name}”.`); }
+$("importBtn").onclick = () => $("importSheet").classList.add("on");
+$("closeImport").onclick = () => $("importSheet").classList.remove("on");
+$("importSheet").addEventListener("click", e => { if (e.target.id === "importSheet") $("importSheet").classList.remove("on"); });
+$("pickFileBtn").onclick = () => { $("importSheet").classList.remove("on"); $("fileInput").click(); };
+
+// Colar do app Notas (ou de qualquer lugar): o iOS pede confirmação com a bolha “Colar”.
+$("pasteBtn").onclick = async () => {
+  $("importSheet").classList.remove("on");
+  let text = "";
+  try { if (navigator.clipboard && navigator.clipboard.readText) text = await navigator.clipboard.readText(); } catch (e) {}
+  text = cleanText(text || "");
+  if (!text) {
+    const s = { id: uid(), title: "Roteiro colado", body: "", updated: Date.now() };
+    scripts.push(s); saveScripts(); openEditor(s.id);
+    $("bodyInput").focus();
+    alert("Não encontrei texto copiado. No campo de texto, toque e segure e escolha “Colar”.");
+    return;
   }
-  ev.target.value = "";
-  saveScripts(); renderList();
-  if (notes.length) alert(notes.join("\n"));
+  const s = { id: uid(), title: titleFrom(text), body: text, updated: Date.now() };
+  scripts.push(s); saveScripts(); openEditor(s.id);
 };
+
+function cleanText(t) {
+  return t.replace(/^﻿/, "").replace(/\r\n?/g, "\n").replace(/ /g, " ")
+    .replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+function titleFrom(text) {
+  const first = (text.split("\n").find(l => l.trim()) || "Roteiro").trim();
+  return first.length > 60 ? first.slice(0, 57).trim() + "…" : first;
+}
+
+$("fileInput").onchange = async (ev) => {
+  const files = Array.from(ev.target.files || []);
+  ev.target.value = "";
+  if (!files.length) return;
+  const notes = [];
+  let lastId = null;
+  showNotice(files.length > 1 ? `Lendo ${files.length} arquivos…` : `Lendo “${files[0].name}”…`);
+  for (const f of files) {
+    try {
+      const r = await extractText(f);
+      const text = cleanText(r.text);
+      if (!text) {
+        notes.push(`“${f.name}”: nenhum texto encontrado${r.kind === "pdf" ? " (PDF escaneado, feito de imagem, não tem texto para ler)" : ""}.`);
+        continue;
+      }
+      const s = { id: uid(), title: f.name.replace(/\.(txt|md|markdown|pdf|docx)$/i, "") || "Roteiro importado", body: text, updated: Date.now() };
+      scripts.push(s); lastId = s.id;
+      if (r.note) notes.push(`“${f.name}”: ${r.note}`);
+    } catch (e) {
+      notes.push(`“${f.name}”: ${e && e.message ? e.message : "não foi possível ler."}`);
+    }
+  }
+  showNotice("");
+  saveScripts(); renderList();
+  if (notes.length) alert(notes.join("\n\n"));
+  if (files.length === 1 && lastId) openEditor(lastId);
+};
+
+// ---------- Leitura de .txt, .md, .pdf e .docx (tudo no aparelho) ----------
+async function extractText(file) {
+  const name = file.name.toLowerCase();
+  const type = file.type || "";
+  if (name.endsWith(".doc")) throw new Error("arquivos .doc antigos não são suportados. No Word, use Salvar como ▸ .docx ou PDF.");
+  if (name.endsWith(".pages")) throw new Error("arquivos do Pages não são suportados. No Pages, use Exportar ▸ Word (.docx) ou PDF.");
+  const buf = await file.arrayBuffer();
+  if (name.endsWith(".pdf") || type === "application/pdf") return { kind: "pdf", text: await pdfToText(buf) };
+  if (name.endsWith(".docx") || type.includes("wordprocessingml")) return { kind: "docx", text: await docxToText(buf) };
+  let text, note = null;
+  try { text = new TextDecoder("utf-8", { fatal: true }).decode(buf); }
+  catch (e) { text = new TextDecoder("windows-1252").decode(buf); note = "não estava em UTF-8; confira os acentos."; }
+  if (/\.(md|markdown)$/.test(name) || type === "text/markdown") text = markdownToText(text);
+  return { kind: "txt", text, note };
+}
+
+// Markdown → texto corrido: tira as marcações (#, **, links, imagens, código) e mantém o conteúdo.
+function markdownToText(md) {
+  return md.replace(/\r\n?/g, "\n")
+    .replace(/^[ \t]*```.*$/gm, "")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
+    .replace(/^[ \t]{0,3}>[ \t]?/gm, "")
+    .replace(/^[ \t]*[-*+][ \t]+\[[ xX]\][ \t]+/gm, "• ")
+    .replace(/^[ \t]*[-*+][ \t]+/gm, "• ")
+    .replace(/^[ \t]*(-{3,}|\*{3,}|_{3,})[ \t]*$/gm, "")
+    .replace(/(\*\*|__)(.+?)\1/g, "$2")
+    .replace(/\*([^*\n]+)\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/<[^>]+>/g, "");
+}
+
+// PDF → texto com o PDF.js (Mozilla). Junta as linhas de cada parágrafo, que no PDF são só quebras de layout.
+async function pdfToText(buf) {
+  const pdfjs = await import("./pdf.min.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdf.worker.min.mjs", location.href).href;
+  let doc;
+  try {
+    // isEvalSupported: false — nunca executa código vindo do PDF.
+    doc = await pdfjs.getDocument({ data: new Uint8Array(buf), isEvalSupported: false, disableFontFace: true }).promise;
+  } catch (e) {
+    if (e && e.name === "PasswordException") throw new Error("o PDF tem senha. Remova a senha e tente de novo.");
+    throw new Error("não foi possível abrir o PDF.");
+  }
+  const paragraphs = [];
+  for (let n = 1; n <= doc.numPages; n++) {
+    const page = await doc.getPage(n);
+    const content = await page.getTextContent();
+    const lines = [];
+    let cur = null;
+    for (const it of content.items) {
+      if (typeof it.str !== "string") continue;
+      const y = it.transform[5];
+      const h = Math.abs(it.height || it.transform[3]) || 10;
+      if (!cur || Math.abs(y - cur.y) > h * 0.5) { cur = { y, text: "" }; lines.push(cur); }
+      cur.text += it.str;
+      if (it.hasEOL) cur = null;
+    }
+    const real = lines.map(l => ({ y: l.y, text: l.text.replace(/\s+/g, " ").trim() })).filter(l => l.text);
+    const gaps = [];
+    for (let i = 1; i < real.length; i++) { const g = real[i - 1].y - real[i].y; if (g > 0) gaps.push(g); }
+    gaps.sort((a, b) => a - b);
+    const typical = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0;
+    let para = "";
+    for (let i = 0; i < real.length; i++) {
+      const l = real[i];
+      if (i > 0) {
+        const g = real[i - 1].y - l.y;
+        if (g <= 0 || (typical && g > typical * 1.35)) { paragraphs.push(para); para = ""; }
+      }
+      if (!para) para = l.text;
+      else if (/[-‐]$/.test(para)) para += l.text;   // palavra hifenizada no fim da linha
+      else para += " " + l.text;
+    }
+    if (para) paragraphs.push(para);
+    page.cleanup();
+  }
+  await doc.destroy();
+  return paragraphs.filter(Boolean).join("\n\n");
+}
+
+// Word (.docx) → texto: o .docx é um zip; o texto fica em word/document.xml.
+function loadScript(src) {
+  return new Promise((ok, fail) => {
+    const el = document.createElement("script");
+    el.src = src; el.onload = ok;
+    el.onerror = () => fail(new Error("componente de leitura indisponível (abra o app com internet uma vez)."));
+    document.head.append(el);
+  });
+}
+async function docxToText(buf) {
+  if (!window.fflate) await loadScript("fflate.min.js");
+  let files;
+  try { files = fflate.unzipSync(new Uint8Array(buf), { filter: f => f.name === "word/document.xml" }); }
+  catch (e) { throw new Error("o arquivo não parece ser um Word .docx válido."); }
+  const xmlBytes = files["word/document.xml"];
+  if (!xmlBytes) throw new Error("o arquivo não parece ser um Word .docx válido.");
+  const xml = new DOMParser().parseFromString(new TextDecoder("utf-8").decode(xmlBytes), "application/xml");
+  const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  const paras = Array.from(xml.getElementsByTagNameNS(W, "p"));
+  const textOf = new Map(paras.map(p => [p, ""]));
+  const nearestP = (el) => { let n = el.parentNode; while (n && !(n.localName === "p" && n.namespaceURI === W)) n = n.parentNode; return n; };
+  for (const el of Array.from(xml.getElementsByTagNameNS(W, "*"))) {
+    let piece = null;
+    if (el.localName === "t") piece = el.textContent;   // w:delText (trechos excluídos com controle de alterações) fica de fora
+    else if (el.localName === "tab") piece = " ";
+    else if (el.localName === "br" || el.localName === "cr") piece = "\n";
+    if (piece === null) continue;
+    const p = nearestP(el);
+    if (p) textOf.set(p, textOf.get(p) + piece);
+  }
+  return paras.map(p => textOf.get(p).trim()).filter(Boolean).join("\n\n");
+}
 
 function safeName(t) { return (t || "Roteiro").replace(/[\/\\:*?"<>|]/g, "-").trim() + ".txt"; }
 

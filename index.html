@@ -55,7 +55,9 @@
 
   /* Leitura / gravação */
   #reader { background: #000; }
-  #cam { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  /* Prévia mostra a imagem inteira, como será gravada; "fill" preenche a tela cortando as bordas. */
+  #cam { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+  #cam.fill { object-fit: cover; }
   #cam.mirror { transform: scaleX(-1); }
   #noCam { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: var(--muted);
     text-align: center; padding: 30px; font-size: 15px; }
@@ -181,14 +183,16 @@
     <div class="field"><label>Contagem regressiva</label>
       <select id="sCountdown"><option value="0">Desligada</option><option value="3">3 segundos</option><option value="5">5 segundos</option><option value="10">10 segundos</option></select></div>
     <div class="field"><label>Qualidade do vídeo</label>
-      <select id="sQuality"><option value="720">HD 720p</option><option value="1080">Full HD 1080p</option></select></div>
+      <select id="sQuality"><option value="720">HD 720p</option><option value="1080">Full HD 1080p</option><option value="4k">4K (se o iPhone permitir)</option></select>
+      <p class="small" id="camInfo"></p></div>
+    <div class="field switch"><span>Prévia em tela cheia (corta as bordas)</span><input type="checkbox" id="sFill"></div>
     <div class="field switch"><span>Mostrar linha de leitura</span><input type="checkbox" id="sShowFocus"></div>
     <div class="field switch"><span>Parar a gravação no fim do roteiro</span><input type="checkbox" id="sStopAtEnd"></div>
     <div class="field switch"><span>Espelhar o texto (vidro de teleprompter)</span><input type="checkbox" id="sMirrorText"></div>
     <div class="field switch"><span>Gravar som (microfone)</span><input type="checkbox" id="sAudio"></div>
     <div class="field switch"><span>Usar a câmera traseira</span><input type="checkbox" id="sBackCam"></div>
     <p class="small">O texto aparece só na sua tela: <b>não entra no vídeo gravado</b>. A prévia da câmera frontal aparece espelhada, como no app Câmera; o vídeo salvo fica na orientação normal.</p>
-    <p class="small">● vermelho: contagem, depois grava e rola junto. ▶︎: ensaiar (rola sem gravar). Toque no texto para pausar ou retomar; com a rolagem pausada, arraste o texto para reposicionar.</p>
+    <p class="small">● vermelho: contagem, depois grava e rola junto. A contagem só acontece ao começar do início; retomar uma pausa é imediato. ▶︎: ensaiar (rola sem gravar). Toque no texto para pausar ou retomar; com a rolagem pausada, arraste o texto para reposicionar.</p>
   </div>
 </div>
 
@@ -243,7 +247,7 @@ const SAMPLE = {
 
 const DEFAULT_PREFS = {
   speed: 35, fontSize: 34, lineHeight: 1.35, areaHeight: 42, focus: 22, bg: 45,
-  countdown: 3, quality: "1080", showFocus: true, stopAtEnd: false, mirrorText: false,
+  countdown: 3, quality: "1080", fillPreview: false, showFocus: true, stopAtEnd: false, mirrorText: false,
   audio: true, facing: "user"
 };
 
@@ -575,27 +579,48 @@ function tick(now) {
 function setPlaying(on) {
   if (on && engine.offset >= engine.max) engine.offset = 0;
   engine.playing = on; engine.last = null;
-  $("playBtn").textContent = on ? "❚❚" : "▶︎";
+  updatePlayBtn();
   draw();
 }
-
-function countdownThen(fn) {
-  const n = Number(prefs.countdown);
-  if (!n) { fn(); return; }
-  engine.counting = true;
-  const el = $("countdown"); let left = n;
-  el.textContent = left; el.style.display = "flex";
-  const iv = setInterval(() => {
-    left -= 1;
-    if (!engine.counting) { clearInterval(iv); el.style.display = "none"; return; }
-    if (left <= 0) { clearInterval(iv); el.style.display = "none"; engine.counting = false; fn(); }
-    else el.textContent = left;
-  }, 1000);
+function updatePlayBtn() {
+  $("playBtn").textContent = engine.playing || engine.counting ? "❚❚" : "▶︎";
 }
 
+// Contagem regressiva com identificador: cancelar e recomeçar rápido nunca deixa duas contagens rodando.
+let countdownId = 0;
+function cancelCountdown() {
+  countdownId++;
+  engine.counting = false;
+  $("countdown").style.display = "none";
+  updatePlayBtn();
+}
+function countdownThen(fn) {
+  cancelCountdown();
+  const n = Number(prefs.countdown);
+  if (!n) { fn(); return; }
+  const id = countdownId;
+  engine.counting = true; updatePlayBtn();
+  const el = $("countdown"); let left = n;
+  el.textContent = left; el.style.display = "flex";
+  const step = () => {
+    if (id !== countdownId) return;           // contagem cancelada ou substituída
+    left -= 1;
+    if (left > 0) { el.textContent = left; setTimeout(step, 1000); return; }
+    engine.counting = false; el.style.display = "none";
+    fn();
+    updatePlayBtn();
+  };
+  setTimeout(step, 1000);
+}
+
+// Pausar: imediato. Retomar do meio do roteiro: imediato (sem refazer a contagem).
+// A contagem regressiva só acontece ao começar do início.
 function togglePlay() {
-  if (engine.counting) { engine.counting = false; return; }
-  if (engine.playing) setPlaying(false); else countdownThen(() => setPlaying(true));
+  if (engine.counting) { cancelCountdown(); return; }
+  if (engine.playing) { setPlaying(false); return; }
+  const fromStart = engine.offset <= 0.5 || engine.offset >= engine.max;
+  if (fromStart) countdownThen(() => setPlaying(true));
+  else setPlaying(true);
 }
 
 function updateLabels() {
@@ -612,51 +637,103 @@ function relayoutKeepingPlace() {
 }
 
 $("playBtn").onclick = togglePlay;
-$("rewind").onclick = () => { engine.counting = false; setPlaying(false); engine.offset = 0; draw(); };
+$("rewind").onclick = () => { cancelCountdown(); setPlaying(false); engine.offset = 0; draw(); };
 $("faster").onclick = () => { prefs.speed = Math.min(300, prefs.speed + 5); updateLabels(); savePrefs(); };
 $("slower").onclick = () => { prefs.speed = Math.max(5, prefs.speed - 5); updateLabels(); savePrefs(); };
 $("bigger").onclick = () => { prefs.fontSize = Math.min(80, prefs.fontSize + 2); updateLabels(); savePrefs(); relayoutKeepingPlace(); };
 $("smaller").onclick = () => { prefs.fontSize = Math.max(18, prefs.fontSize - 2); updateLabels(); savePrefs(); relayoutKeepingPlace(); };
 
-// Toque no texto: pausa/retoma. Arrastar com a rolagem pausada: reposiciona.
+// Toque no texto: pausa/retoma. Arrastar (mais de 18 px): pausa e reposiciona o texto.
 (function promptGestures() {
-  const p = $("prompt"); let startY = 0, startOff = 0, moved = false;
-  p.addEventListener("pointerdown", e => { startY = e.clientY; startOff = engine.offset; moved = false; p.setPointerCapture(e.pointerId); });
-  p.addEventListener("pointermove", e => {
-    if (!p.hasPointerCapture(e.pointerId)) return;
-    const dy = e.clientY - startY;
-    if (Math.abs(dy) > 8) moved = true;
-    if (moved && !engine.playing) { engine.offset = Math.min(engine.max, Math.max(0, startOff - dy)); draw(); }
+  const p = $("prompt");
+  let startY = 0, startOff = 0, dragging = false, active = false;
+  p.addEventListener("pointerdown", e => {
+    active = true; dragging = false; startY = e.clientY; startOff = engine.offset;
+    try { p.setPointerCapture(e.pointerId); } catch (err) {}
   });
-  p.addEventListener("pointerup", () => { if (!moved) togglePlay(); });
+  p.addEventListener("pointermove", e => {
+    if (!active) return;
+    const dy = e.clientY - startY;
+    if (!dragging && Math.abs(dy) > 18) {
+      dragging = true;
+      if (engine.counting) cancelCountdown();
+      if (engine.playing) setPlaying(false);
+      startY = e.clientY; startOff = engine.offset;   // começa a arrastar a partir daqui, sem pulo
+      return;
+    }
+    if (dragging) { engine.offset = Math.min(engine.max, Math.max(0, startOff - dy)); draw(); }
+  });
+  p.addEventListener("pointerup", () => {
+    if (!active) return;
+    active = false;
+    if (!dragging) togglePlay();
+  });
+  p.addEventListener("pointercancel", () => { active = false; dragging = false; });
 })();
 
 // ---------- Câmera e gravação ----------
 let stream = null, recorder = null, chunks = [], recStart = 0, recTimer = null, lastVideoUrl = null, lastVideoFile = null;
 
+// Resoluções: o lado maior e o menor do quadro (16:9), como a câmera do iPhone grava.
+const QUALITY = { "720": [1280, 720], "1080": [1920, 1080], "4k": [3840, 2160] };
+
 async function startCamera() {
   stopCamera();
-  const q = prefs.quality === "720" ? { w: 1280, h: 720 } : { w: 1920, h: 1080 };
-  const portrait = window.innerHeight > window.innerWidth;
-  const constraints = {
-    video: { facingMode: prefs.facing, width: { ideal: portrait ? q.h : q.w }, height: { ideal: portrait ? q.w : q.h }, frameRate: { ideal: 30 } },
-    audio: prefs.audio ? { echoCancellation: true, noiseSuppression: true } : false
-  };
   const v = $("cam"), msg = $("noCam");
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error("sem suporte");
-    stream = await navigator.mediaDevices.getUserMedia(constraints);
-    v.srcObject = stream; v.classList.toggle("mirror", prefs.facing === "user");
+    // Primeiro pede a câmera sem forçar tamanho; só depois ajusta a resolução na MESMA orientação que o iPhone
+    // entrega. Pedir 1080×1920 “em pé” fazia o iOS recortar e ampliar a imagem (efeito de zoom e perda de nitidez).
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: prefs.facing, frameRate: { ideal: 30 } },
+      audio: prefs.audio ? { echoCancellation: true, noiseSuppression: true } : false
+    });
+    const track = stream.getVideoTracks()[0];
+    await tuneCamera(track);
+    v.srcObject = stream;
+    v.classList.toggle("mirror", prefs.facing === "user");
+    v.classList.toggle("fill", !!prefs.fillPreview);
     await v.play().catch(() => {});
     msg.style.display = "none";
+    showCamInfo(track);
   } catch (e) {
     stream = null;
     msg.style.display = "flex";
     msg.textContent = e.name === "NotAllowedError"
-      ? "Acesso à câmera negado. Para gravar, permita a câmera: Ajustes do iPhone ▸ Safari ▸ Câmera (e Microfone) ▸ Perguntar ou Permitir. O teleprompter continua funcionando sem câmera."
+      ? "Acesso à câmera negado. Para gravar, permita a câmera: Ajustes do iPhone ▸ Apps ▸ Safari ▸ Câmera (e Microfone) ▸ Perguntar ou Permitir. O teleprompter continua funcionando sem câmera."
       : "Câmera indisponível. O teleprompter funciona normalmente; para gravar, abra o app pelo ícone na Tela de Início do iPhone.";
+    showCamInfo(null);
   }
 }
+
+async function tuneCamera(track) {
+  const [long, short] = QUALITY[prefs.quality] || QUALITY["1080"];
+  try {
+    const s = track.getSettings ? track.getSettings() : {};
+    const portrait = (s.height || 0) > (s.width || 0);
+    await track.applyConstraints({
+      width: { ideal: portrait ? short : long },
+      height: { ideal: portrait ? long : short },
+      frameRate: { ideal: 30 }
+    });
+  } catch (e) { /* mantém o que a câmera entregou */ }
+  // Zoom normal (1×), como no app Câmera — quando o iOS permite controlar.
+  try {
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if (caps.zoom && typeof caps.zoom.min === "number") {
+      await track.applyConstraints({ advanced: [{ zoom: Math.min(caps.zoom.max, Math.max(caps.zoom.min, 1)) }] });
+    }
+  } catch (e) {}
+}
+
+function showCamInfo(track) {
+  const el = $("camInfo"); if (!el) return;
+  if (!track) { el.textContent = "Câmera: indisponível."; return; }
+  const s = track.getSettings ? track.getSettings() : {};
+  const w = Math.max(s.width || 0, s.height || 0), h = Math.min(s.width || 0, s.height || 0);
+  el.textContent = w ? `Câmera agora: ${w} × ${h}${s.frameRate ? `, ${Math.round(s.frameRate)} fps` : ""}.` : "";
+}
+
 function stopCamera() {
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null;
@@ -674,7 +751,7 @@ function startRecording() {
   if (mime === null) { alert("Este iPhone não permite gravar vídeo pelo app (requer iOS 14.5 ou mais recente)."); return; }
   chunks = [];
   try {
-    recorder = new MediaRecorder(stream, Object.assign({ videoBitsPerSecond: prefs.quality === "720" ? 5e6 : 9e6 }, mime ? { mimeType: mime } : {}));
+    recorder = new MediaRecorder(stream, Object.assign({ videoBitsPerSecond: prefs.quality === "720" ? 5e6 : prefs.quality === "4k" ? 25e6 : 10e6 }, mime ? { mimeType: mime } : {}));
   } catch (e) { alert("Não foi possível iniciar a gravação: " + e.message); return; }
   recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
   recorder.onstop = finishRecording;
@@ -716,7 +793,7 @@ function finishRecording() {
 
 $("recBtn").onclick = () => {
   if (recorder && recorder.state === "recording") { stopRecording(); return; }
-  if (engine.counting) { engine.counting = false; return; }
+  if (engine.counting) { cancelCountdown(); return; }
   setPlaying(false);
   engine.offset = engine.offset >= engine.max ? 0 : engine.offset;
   draw();
@@ -752,7 +829,7 @@ $("sBackCam").onchange = async () => {
 async function openReader() {
   const s = current();
   $("promptText").textContent = (s && s.body.trim()) ? s.body : "Roteiro vazio — volte e escreva o texto.";
-  engine.offset = 0; engine.counting = false; setPlaying(false);
+  engine.offset = 0; cancelCountdown(); setPlaying(false);
   show("reader");
   updateLabels();
   layoutPrompt();
@@ -766,7 +843,7 @@ function closeReader() {
     if (!confirm("Parar a gravação e sair?")) return;
     stopRecording();
   }
-  engine.counting = false; setPlaying(false);
+  cancelCountdown(); setPlaying(false);
   stopCamera();
   releaseWakeLock();
   show("editScreen");
@@ -781,7 +858,7 @@ function releaseWakeLock() { try { wakeLock && wakeLock.release(); } catch (e) {
 // Ao sair do app (ligação, bloqueio de tela), pausa e encerra a gravação salvando o que já foi gravado.
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
-    engine.counting = false; setPlaying(false);
+    cancelCountdown(); setPlaying(false);
     if (recorder && recorder.state === "recording") stopRecording();
   } else if ($("reader").classList.contains("on")) {
     requestWakeLock();
@@ -803,6 +880,8 @@ function openSettings() {
   for (const [id, key, fmt] of sliders) { $(id).value = prefs[key]; $(id + "V").textContent = fmt(prefs[key]); }
   $("sCountdown").value = String(prefs.countdown);
   $("sQuality").value = prefs.quality;
+  $("sFill").checked = !!prefs.fillPreview;
+  showCamInfo(stream ? stream.getVideoTracks()[0] : null);
   $("sShowFocus").checked = prefs.showFocus;
   $("sStopAtEnd").checked = prefs.stopAtEnd;
   $("sMirrorText").checked = prefs.mirrorText;
@@ -820,6 +899,7 @@ $("sCountdown").onchange = () => { prefs.countdown = Number($("sCountdown").valu
 $("sShowFocus").onchange = () => { prefs.showFocus = $("sShowFocus").checked; savePrefs(); layoutPrompt(); };
 $("sStopAtEnd").onchange = () => { prefs.stopAtEnd = $("sStopAtEnd").checked; savePrefs(); };
 $("sMirrorText").onchange = () => { prefs.mirrorText = $("sMirrorText").checked; savePrefs(); draw(); };
+$("sFill").onchange = () => { prefs.fillPreview = $("sFill").checked; savePrefs(); $("cam").classList.toggle("fill", prefs.fillPreview); };
 $("sQuality").onchange = () => { prefs.quality = $("sQuality").value; savePrefs(); if (!(recorder && recorder.state === "recording")) startCamera(); };
 $("sAudio").onchange = () => { prefs.audio = $("sAudio").checked; savePrefs(); if (!(recorder && recorder.state === "recording")) startCamera(); };
 $("settingsBtn").onclick = openSettings;

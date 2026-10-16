@@ -60,8 +60,8 @@ Alguns arquivos não podem ser lidos:
 |---|---|
 | **− / +** | Velocidade do texto (funciona até no meio da gravação) |
 | **A / A** | Diminui ou aumenta a letra |
-| **Toque no texto** | Pausa ou retoma a rolagem (a gravação continua) |
-| **Arrastar o texto** | Com a rolagem pausada, sobe ou desce o texto |
+| **Toque no texto** | Pausa ou retoma a rolagem na hora (a gravação continua) |
+| **Arrastar o texto** | Pausa a rolagem e sobe ou desce o texto |
 | **▶︎** | **Ensaiar**: rola o texto sem gravar |
 | **⏮** | Volta ao começo do roteiro |
 | **⚙︎** | Ajustes (veja abaixo) |
@@ -70,8 +70,11 @@ Alguns arquivos não podem ser lidos:
 ### Ajustes (⚙︎)
 
 Altura da área de texto · posição da linha de leitura · quanto escurecer atrás do texto · espaçamento entre linhas ·
-contagem regressiva (desligada, 3, 5 ou 10 s) · qualidade (HD 720p ou Full HD 1080p) · parar a gravação no fim do
-roteiro · espelhar o texto (para vidro de teleprompter) · gravar som · usar a câmera traseira.
+contagem regressiva (desligada, 3, 5 ou 10 s; só ao começar do início) · qualidade (HD 720p, Full HD 1080p ou 4K,
+se o iPhone permitir) · prévia em tela cheia (corta as bordas da imagem) · parar a gravação no fim do roteiro · espelhar o texto (para vidro de teleprompter) · gravar som · usar a câmera traseira.
+
+> A prévia mostra a **imagem inteira**, exatamente como será gravada. Por isso podem aparecer faixas pretas em
+> cima e embaixo; o vídeo salvo não tem essas faixas.
 
 ---
 

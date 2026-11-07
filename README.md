@@ -69,12 +69,38 @@ Alguns arquivos não podem ser lidos:
 
 ### Ajustes (⚙︎)
 
+**Novidades:**
+- **Formato do vídeo:** Original, **Reels/Shorts/TikTok (9:16)**, **YouTube (16:9)** ou **Quadrado (1:1)**. Uma
+  moldura dourada na tela mostra o que vai entrar no vídeo. Use 9:16 com o celular em pé e 16:9 com o celular deitado.
+- **Posição do texto:** no alto, perto da câmera (o melhor para olhar na lente), no meio ou embaixo.
+- **Usar a câmera:** desligue para usar o iPhone **só como teleprompter**, na frente de outra câmera.
+
+Os demais ajustes:
+
 Altura da área de texto · posição da linha de leitura · quanto escurecer atrás do texto · espaçamento entre linhas ·
 contagem regressiva (desligada, 3, 5 ou 10 s; só ao começar do início) · qualidade (HD 720p, Full HD 1080p ou 4K,
 se o iPhone permitir) · prévia em tela cheia (corta as bordas da imagem) · parar a gravação no fim do roteiro · espelhar o texto (para vidro de teleprompter) · gravar som · usar a câmera traseira.
 
 > A prévia mostra a **imagem inteira**, exatamente como será gravada. Por isso podem aparecer faixas pretas em
 > cima e embaixo; o vídeo salvo não tem essas faixas.
+
+---
+
+## 🎮 Controle Bluetooth ou teclado
+
+Dá para controlar sem tocar na tela, com um **controle Bluetooth de passar slides** (os mais baratos funcionam) ou
+um teclado Bluetooth. Primeiro, pareie o controle em **Ajustes do iPhone ▸ Bluetooth**.
+
+| Tecla do controle | O que faz |
+|---|---|
+| **→**, **Page Down**, **Espaço** ou **Enter** | Pausa / retoma o texto |
+| **←** ou **Page Up** | Volta 2 linhas |
+| **↑ / ↓** | Mais rápido / mais devagar |
+| **R** | Começa / para a gravação |
+| **0** | Volta ao começo |
+
+> ⚠️ Os botões de **selfie** que funcionam pelo **volume** não funcionam aqui; é uma limitação do iPhone para apps
+> da Tela de Início. Prefira um controle de “passar slides” (*presenter*).
 
 ---
 

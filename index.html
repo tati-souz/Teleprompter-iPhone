@@ -58,6 +58,10 @@
   /* Prévia mostra a imagem inteira, como será gravada; "fill" preenche a tela cortando as bordas. */
   #cam { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
   #cam.fill { object-fit: cover; }
+  #formatGuide { position: absolute; display: none; pointer-events: none; border: 2px solid rgba(214,179,107,.9);
+    box-shadow: 0 0 0 9999px rgba(0,0,0,.5); }
+  #safeProbe { position: fixed; top: 0; left: 0; width: 0; height: env(safe-area-inset-top); visibility: hidden; }
+  #reader.noCamera #recBtn { visibility: hidden; }
   #cam.mirror { transform: scaleX(-1); }
   #noCam { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: var(--muted);
     text-align: center; padding: 30px; font-size: 15px; }
@@ -146,7 +150,9 @@
 <!-- LEITURA E GRAVAÇÃO -->
 <section id="reader" class="screen">
   <video id="cam" class="mirror" playsinline muted autoplay></video>
+  <div id="formatGuide"></div>
   <div id="noCam"></div>
+  <div id="safeProbe"></div>
   <div id="prompt">
     <div id="promptBg"></div>
     <div id="focus"></div>
@@ -182,6 +188,12 @@
     <div class="field"><label>Escurecer atrás do texto <span id="sBgV"></span></label><input type="range" id="sBg" min="0" max="100" step="1"></div>
     <div class="field"><label>Contagem regressiva</label>
       <select id="sCountdown"><option value="0">Desligada</option><option value="3">3 segundos</option><option value="5">5 segundos</option><option value="10">10 segundos</option></select></div>
+    <div class="field switch"><span>Usar a câmera (desligue para usar só como teleprompter, na frente de outra câmera)</span><input type="checkbox" id="sCamera"></div>
+    <div class="field"><label>Formato do vídeo</label>
+      <select id="sFormat"><option value="original">Original (como a câmera grava)</option><option value="9:16">Reels, Shorts, TikTok (9:16)</option><option value="16:9">YouTube horizontal (16:9)</option><option value="1:1">Quadrado (1:1)</option></select>
+      <p class="small">9:16 com o celular em pé; 16:9 com o celular deitado. A moldura dourada na tela mostra o que entra no vídeo.</p></div>
+    <div class="field"><label>Posição do texto na tela</label>
+      <select id="sTextPos"><option value="top">No alto, perto da câmera (recomendado)</option><option value="middle">No meio</option><option value="bottom">Embaixo</option></select></div>
     <div class="field"><label>Qualidade do vídeo</label>
       <select id="sQuality"><option value="720">HD 720p</option><option value="1080">Full HD 1080p</option><option value="4k">4K (se o iPhone permitir)</option></select>
       <p class="small" id="camInfo"></p></div>
@@ -192,6 +204,7 @@
     <div class="field switch"><span>Gravar som (microfone)</span><input type="checkbox" id="sAudio"></div>
     <div class="field switch"><span>Usar a câmera traseira</span><input type="checkbox" id="sBackCam"></div>
     <p class="small">O texto aparece só na sua tela: <b>não entra no vídeo gravado</b>. A prévia da câmera frontal aparece espelhada, como no app Câmera; o vídeo salvo fica na orientação normal.</p>
+    <p class="small"><b>Controle Bluetooth ou teclado:</b> Espaço, Enter, → ou Page Down pausam/retomam · ← ou Page Up voltam 2 linhas · ↑/↓ velocidade · R grava/para · 0 volta ao começo. Funciona com controles de “passar slides”. Botões de selfie que usam o volume não funcionam (limitação do iOS).</p>
     <p class="small">● vermelho: contagem, depois grava e rola junto. A contagem só acontece ao começar do início; retomar uma pausa é imediato. ▶︎: ensaiar (rola sem gravar). Toque no texto para pausar ou retomar; com a rolagem pausada, arraste o texto para reposicionar.</p>
   </div>
 </div>
@@ -247,7 +260,7 @@ const SAMPLE = {
 
 const DEFAULT_PREFS = {
   speed: 35, fontSize: 34, lineHeight: 1.35, areaHeight: 42, focus: 22, bg: 45,
-  countdown: 3, quality: "1080", fillPreview: false, showFocus: true, stopAtEnd: false, mirrorText: false,
+  countdown: 3, quality: "1080", fillPreview: false, cameraOn: true, format: "original", textPos: "top", showFocus: true, stopAtEnd: false, mirrorText: false,
   audio: true, facing: "user"
 };
 
@@ -534,10 +547,15 @@ const engine = { offset: 0, playing: false, last: null, max: 0, counting: false 
 let rafId = null, wakeLock = null;
 
 function layoutPrompt() {
-  const st = $("prompt").getBoundingClientRect().top;   // altura da faixa da câmera (safe area)
+  const st = $("safeProbe").offsetHeight;   // faixa da câmera / Dynamic Island
+  const ctrlH = $("controls").offsetHeight || 0;
   const H = window.innerHeight - st;
-  const area = Math.round(H * prefs.areaHeight / 100);
   const prompt = $("prompt");
+  let area = Math.round(H * prefs.areaHeight / 100);
+  let top = st;
+  if (prefs.textPos === "middle") { area = Math.min(area, H - ctrlH); top = st + Math.max(0, (H - ctrlH - area) / 2); }
+  else if (prefs.textPos === "bottom") { area = Math.min(area, H - ctrlH); top = window.innerHeight - ctrlH - area; }
+  prompt.style.top = top + "px";
   prompt.style.height = area + "px";
   $("promptBg").style.opacity = prefs.bg / 100;
   const t = $("promptText");
@@ -680,6 +698,11 @@ const QUALITY = { "720": [1280, 720], "1080": [1920, 1080], "4k": [3840, 2160] }
 async function startCamera() {
   stopCamera();
   const v = $("cam"), msg = $("noCam");
+  $("reader").classList.toggle("noCamera", !prefs.cameraOn);
+  if (!prefs.cameraOn) {   // modo só teleprompter
+    v.srcObject = null; msg.style.display = "none"; updateFormatGuide(); showCamInfo(null);
+    return;
+  }
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error("sem suporte");
     // Primeiro pede a câmera sem forçar tamanho; só depois ajusta a resolução na MESMA orientação que o iPhone
@@ -693,7 +716,9 @@ async function startCamera() {
     v.srcObject = stream;
     v.classList.toggle("mirror", prefs.facing === "user");
     v.classList.toggle("fill", !!prefs.fillPreview);
+    v.onloadedmetadata = updateFormatGuide;
     await v.play().catch(() => {});
+    updateFormatGuide();
     msg.style.display = "none";
     showCamInfo(track);
   } catch (e) {
@@ -731,12 +756,20 @@ function showCamInfo(track) {
   if (!track) { el.textContent = "Câmera: indisponível."; return; }
   const s = track.getSettings ? track.getSettings() : {};
   const w = Math.max(s.width || 0, s.height || 0), h = Math.min(s.width || 0, s.height || 0);
-  el.textContent = w ? `Câmera agora: ${w} × ${h}${s.frameRate ? `, ${Math.round(s.frameRate)} fps` : ""}.` : "";
+  let txt = w ? `Câmera agora: ${w} × ${h}${s.frameRate ? `, ${Math.round(s.frameRate)} fps` : ""}.` : "";
+  const v = $("cam");
+  if (txt && FORMATS[prefs.format] && v.videoWidth) {
+    const r = cropRect(v.videoWidth, v.videoHeight, prefs.format);
+    txt += ` Vídeo no formato ${prefs.format}: ${r.w} × ${r.h}.`;
+  }
+  el.textContent = txt;
 }
 
 function stopCamera() {
+  stopCanvasRec();
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null;
+  updateFormatGuide();
 }
 
 function pickMime() {
@@ -751,8 +784,8 @@ function startRecording() {
   if (mime === null) { alert("Este iPhone não permite gravar vídeo pelo app (requer iOS 14.5 ou mais recente)."); return; }
   chunks = [];
   try {
-    recorder = new MediaRecorder(stream, Object.assign({ videoBitsPerSecond: prefs.quality === "720" ? 5e6 : prefs.quality === "4k" ? 25e6 : 10e6 }, mime ? { mimeType: mime } : {}));
-  } catch (e) { alert("Não foi possível iniciar a gravação: " + e.message); return; }
+    recorder = new MediaRecorder(recordingStream(), Object.assign({ videoBitsPerSecond: prefs.quality === "720" ? 5e6 : prefs.quality === "4k" ? 25e6 : 10e6 }, mime ? { mimeType: mime } : {}));
+  } catch (e) { stopCanvasRec(); alert("Não foi possível iniciar a gravação: " + e.message); return; }
   recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
   recorder.onstop = finishRecording;
   recorder.start(1000);
@@ -775,6 +808,7 @@ function stopRecording() {
 }
 
 function finishRecording() {
+  stopCanvasRec();
   const type = (recorder && recorder.mimeType) || "video/mp4";
   const ext = type.includes("webm") ? "webm" : "mp4";
   const blob = new Blob(chunks, { type });
@@ -825,11 +859,89 @@ $("sBackCam").onchange = async () => {
   prefs.facing = $("sBackCam").checked ? "environment" : "user"; savePrefs(); await startCamera();
 };
 
+// ---------- Formato do vídeo (Reels 9:16, YouTube 16:9, quadrado) ----------
+// "Original" grava direto da câmera. Os outros formatos recortam o centro da imagem num canvas
+// e gravam o canvas (o som vem do mesmo microfone). Nada sai do aparelho.
+const FORMATS = { "9:16": 9 / 16, "16:9": 16 / 9, "1:1": 1 };
+let canvasRec = null;
+
+function cropRect(vw, vh, fmt) {
+  const target = FORMATS[fmt];
+  if (!target || !vw || !vh) return { x: 0, y: 0, w: vw, h: vh };
+  let w = vw, h = vh;
+  if (vw / vh > target) w = Math.round(vh * target); else h = Math.round(vw / target);
+  w -= w % 2; h -= h % 2;   // codificadores de vídeo preferem dimensões pares
+  return { x: Math.round((vw - w) / 2), y: Math.round((vh - h) / 2), w, h };
+}
+
+function recordingStream() {
+  const v = $("cam");
+  if (!FORMATS[prefs.format] || !v.videoWidth) return stream;
+  if (!HTMLCanvasElement.prototype.captureStream) return stream;   // iOS antigo: grava no formato original
+  const r = cropRect(v.videoWidth, v.videoHeight, prefs.format);
+  const c = document.createElement("canvas");
+  c.width = r.w; c.height = r.h;
+  const ctx = c.getContext("2d", { alpha: false });
+  // Relógio fixo de 30 quadros/s: não depende do ritmo da tela (que o iOS reduz no Modo de Pouca Energia).
+  const paint = () => ctx.drawImage(v, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+  paint();
+  canvasRec = { timer: setInterval(paint, 1000 / 30), out: null };
+  const out = c.captureStream(30);
+  stream.getAudioTracks().forEach(t => out.addTrack(t));
+  canvasRec.out = out;
+  return out;
+}
+
+function stopCanvasRec() {
+  if (!canvasRec) return;
+  clearInterval(canvasRec.timer);
+  if (canvasRec.out) canvasRec.out.getVideoTracks().forEach(t => t.stop());   // o áudio é da câmera; não para aqui
+  canvasRec = null;
+}
+
+// Moldura na prévia mostrando o que entra no vídeo; o que fica fora aparece escurecido.
+function updateFormatGuide() {
+  const g = $("formatGuide"), v = $("cam");
+  if (!FORMATS[prefs.format] || !stream || !v.videoWidth) { g.style.display = "none"; return; }
+  const W = v.clientWidth, H = v.clientHeight, vw = v.videoWidth, vh = v.videoHeight;
+  const scale = prefs.fillPreview ? Math.max(W / vw, H / vh) : Math.min(W / vw, H / vh);
+  const shownW = vw * scale, shownH = vh * scale;
+  const r = cropRect(vw, vh, prefs.format);
+  g.style.display = "block";
+  g.style.left = ((W - shownW) / 2 + r.x * scale) + "px";
+  g.style.top = ((H - shownH) / 2 + r.y * scale) + "px";
+  g.style.width = (r.w * scale) + "px";
+  g.style.height = (r.h * scale) + "px";
+}
+
+// ---------- Controle Bluetooth de slides ou teclado ----------
+// Controles de “passar slides” enviam setas ou Page Up/Down, que o app recebe como teclas comuns.
+// Botões de selfie que usam o volume não chegam a apps da Tela de Início (limitação do iOS).
+document.addEventListener("keydown", (e) => {
+  if (!$("reader").classList.contains("on")) return;
+  if (document.querySelector(".sheet.on")) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+  let handled = true;
+  if (k === " " || k === "Enter" || k === "PageDown" || k === "ArrowRight" || k === "MediaPlayPause") togglePlay();
+  else if (k === "PageUp" || k === "ArrowLeft") {
+    cancelCountdown(); setPlaying(false);
+    engine.offset = Math.max(0, engine.offset - (engine.lineH || 40) * 2); draw();
+  }
+  else if (k === "ArrowUp") $("faster").click();
+  else if (k === "ArrowDown") $("slower").click();
+  else if (k === "r" || k === "R") $("recBtn").click();
+  else if (k === "Home" || k === "0") $("rewind").click();
+  else handled = false;
+  if (handled) e.preventDefault();
+});
+
 // ---------- Abrir / fechar leitura ----------
 async function openReader() {
   const s = current();
   $("promptText").textContent = (s && s.body.trim()) ? s.body : "Roteiro vazio — volte e escreva o texto.";
   engine.offset = 0; cancelCountdown(); setPlaying(false);
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   show("reader");
   updateLabels();
   layoutPrompt();
@@ -865,7 +977,7 @@ document.addEventListener("visibilitychange", () => {
     if (!stream || stream.getTracks().some(t => t.readyState === "ended")) startCamera();
   }
 });
-window.addEventListener("resize", () => { if ($("reader").classList.contains("on")) relayoutKeepingPlace(); });
+window.addEventListener("resize", () => { if ($("reader").classList.contains("on")) { relayoutKeepingPlace(); updateFormatGuide(); } });
 
 // ---------- Ajustes ----------
 const sliders = [
@@ -881,6 +993,9 @@ function openSettings() {
   $("sCountdown").value = String(prefs.countdown);
   $("sQuality").value = prefs.quality;
   $("sFill").checked = !!prefs.fillPreview;
+  $("sCamera").checked = prefs.cameraOn;
+  $("sFormat").value = prefs.format;
+  $("sTextPos").value = prefs.textPos;
   showCamInfo(stream ? stream.getVideoTracks()[0] : null);
   $("sShowFocus").checked = prefs.showFocus;
   $("sStopAtEnd").checked = prefs.stopAtEnd;
@@ -899,7 +1014,16 @@ $("sCountdown").onchange = () => { prefs.countdown = Number($("sCountdown").valu
 $("sShowFocus").onchange = () => { prefs.showFocus = $("sShowFocus").checked; savePrefs(); layoutPrompt(); };
 $("sStopAtEnd").onchange = () => { prefs.stopAtEnd = $("sStopAtEnd").checked; savePrefs(); };
 $("sMirrorText").onchange = () => { prefs.mirrorText = $("sMirrorText").checked; savePrefs(); draw(); };
-$("sFill").onchange = () => { prefs.fillPreview = $("sFill").checked; savePrefs(); $("cam").classList.toggle("fill", prefs.fillPreview); };
+$("sFill").onchange = () => { prefs.fillPreview = $("sFill").checked; savePrefs(); $("cam").classList.toggle("fill", prefs.fillPreview); updateFormatGuide(); };
+$("sCamera").onchange = () => {
+  if (recorder && recorder.state === "recording") { $("sCamera").checked = prefs.cameraOn; return; }
+  prefs.cameraOn = $("sCamera").checked; savePrefs(); startCamera();
+};
+$("sFormat").onchange = () => {
+  if (recorder && recorder.state === "recording") { $("sFormat").value = prefs.format; return; }
+  prefs.format = $("sFormat").value; savePrefs(); updateFormatGuide(); showCamInfo(stream ? stream.getVideoTracks()[0] : null);
+};
+$("sTextPos").onchange = () => { prefs.textPos = $("sTextPos").value; savePrefs(); relayoutKeepingPlace(); };
 $("sQuality").onchange = () => { prefs.quality = $("sQuality").value; savePrefs(); if (!(recorder && recorder.state === "recording")) startCamera(); };
 $("sAudio").onchange = () => { prefs.audio = $("sAudio").checked; savePrefs(); if (!(recorder && recorder.state === "recording")) startCamera(); };
 $("settingsBtn").onclick = openSettings;
